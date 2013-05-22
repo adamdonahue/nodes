@@ -56,6 +56,20 @@ class NodesClass4(nodes.GraphObject):
     def X(self):
         return True
 
+class NodesClass5(nodes.GraphObject):
+
+    @nodes.graphMethod
+    def A(self):
+        return self.B()
+
+    @nodes.graphMethod(nodes.Settable)
+    def B(self):
+        return self.C()
+
+    @nodes.graphMethod(nodes.Saved)
+    def C(self):
+        return 'X'
+
 class NodesTest1(unittest.TestCase):
 
     def test_simple(self):
@@ -168,6 +182,14 @@ class NodesTest1(unittest.TestCase):
         self.assertEquals(o.X(), True)
         self.assertRaises(RuntimeError, callableObj=o.SetX)
         self.assertEquals(o.X(), True)
+
+    def test_toDict(self):
+        o = NodesClass5()
+        self.assertEquals(o.toDict(), {'C': 'X'})
+        o.C = 'Y'
+        self.assertEquals(o.toDict(), {'C': 'Y'})
+        o.C.clearSet()
+        self.assertEquals(o.toDict(), {'C': 'X'})
 
 if __name__ == '__main__':
     unittest.main()

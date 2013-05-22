@@ -845,7 +845,7 @@ class GraphType(type):
             if isinstance(v, GraphMethod):
                 graphMethods.append(v)
         cls._graphMethods = graphMethods
-        cls._savedGraphMethods = [graphMethod for graphMethod in graphMethods if graphMethod.isSaved()]
+        cls._savedGraphMethods = [v for v in graphMethods if v.isSaved()]
 
 class GraphObject(object):
     """A graph-enabled object.
@@ -876,7 +876,7 @@ class GraphObject(object):
 
         """
         # TODO: Flesh this out a bit: deep toDict, including settable nodes, perhaps, etc.
-        return dict([(k.name, getattr(self, k.name)()) for k in self._savedGraphMethods])
+        return dict((k.name, getattr(self, k.name)()) for k in self._savedGraphMethods)
 
 def graphMethod(funcOrFlags=0, delegateTo=None):
     """Declare a GraphObject method as on-graph.
