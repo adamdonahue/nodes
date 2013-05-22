@@ -599,7 +599,7 @@ class Node(object):
         return self._calcedValue
 
     def calcValue(self):
-        """(Re)calculates the value of this node my calling
+        """(Re)calculates the value of this node by calling
         its underlying method on graph, and updating the
         stored value and status of the calculation
         accordingly.
@@ -889,7 +889,7 @@ def graphMethod(funcOrFlags=0, delegateTo=None):
             def X(self):
                 return self.Y()
 
-            @graphmethod(Settable)
+            @graphMethod(Settable)
             def Y(self):
                 return ...
 
