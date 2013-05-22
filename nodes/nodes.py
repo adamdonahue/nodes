@@ -130,7 +130,8 @@ class GraphVisitor(object):
 
 # TODO: Split collections of overlays from the contexts.
 # TODO: Decouple this from the graph, making graph a paramter to __init__?
-# TODO: Store nodes in contexts, vs some special global.
+# TODO: Store nodes in contexts (not as some global that gets 
+#       special handling if a context is active).
 
 class GraphContext(object):
     """A graph context is collection of temporary node changes
