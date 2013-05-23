@@ -103,6 +103,34 @@ class Graph(object):
             raise RuntimeError("You cannot clear a overlay outside a graph context.")
         self.activeGraphContext.clearOverlay(node)
 
+class _Graph(Graph):
+
+    def __init__(self):
+        self.mainGraphLayer = None      # TODO: The "top-level" layer.
+        self.activeGraphLayer = self.mainGraphLayer
+        self.activeNode = None
+
+    def getValue(self, graphInstanceMethod, args=(), graphLayer=None):
+        pass
+
+    def setValue(self, graphInstanceMethod, value, args=(), graphLayer=None):
+        pass
+
+    def overlayValue(self, graphInstanceMethod, value, args=(), graphLayer=None):
+        pass
+
+    def clearOverlay(self, graphInstanceMethod, args=(), graphLayer=None):
+        pass
+
+    def lookupNode(self, graphInstanceMethod, args=(), graphLayer=None, create=True):
+        graphLayer = graphLayer or self.activeGraphLayer
+        # TODO: Search through the layer and its parents for the node; first match wins.
+        # TODO: But now if the ndoe  doesn't exist we need to create it as before, except
+        #       initialize it with some status values because the node itself will
+        #       no longer be aware of its larger context, only its validity and value.
+
+
+
 class GraphVisitor(object):
     """Visits a hierarchy of graph nodes in depth first order.
 
@@ -347,6 +375,12 @@ class GraphContext(object):
             self._graph.activeGraphContext.clearOverlay(node)
         self._graph.activeGraphContext = self.activeParentGraphContext
 
+class _GraphLayer(GraphContext):
+    pass
+
+class _GraphContext(object):
+    pass
+
 class GraphMethod(object):
     """An unbound graph-enabled method.
 
@@ -453,6 +487,9 @@ class GraphMethod(object):
 #       rife with issues, while also allowing a user to inspect a node's
 #       value or other state.
 #       
+
+class _GraphMethod(GraphMethod):
+    pass
 
 class NodeReference(object):
     """Stores the context-invariant parts of a Node, namely its
@@ -743,6 +780,33 @@ class Node(object):
                 self.isCalced()
                 )
 
+class _Node(object):
+    # TODO: A node should at least know its states even if they can't be 
+    #       modified by a user directly.
+    #
+    #       The states I need present, I believe, are:
+    #           isValid
+    #           isSet
+    #           isOverlaid
+    #           delegated?
+    #           
+    # TODO: Incorporate graph layer into Node; that's where it lives.
+    #
+    def __init__(self, graphLayer, graphInstanceMethod, args):
+        self._graphLayer = graphLayer
+        self._graphInstanceMethod = graphInstanceMethod
+        self._args = args
+        self._value = None
+        self._isValid = False
+        self._isSet = False
+        self._outputs = set()
+        self._inputs = set()
+
+    def isValid(self):
+        return self._isValid
+
+    def isSet(self):
+        return self._isSet
 
 class NodeChange(object):
     """Encapsulates a pending change to a node.  Intended to be
@@ -762,6 +826,8 @@ class NodeChange(object):
     def node(self):
         return _graph.lookupNode(self.graphInstanceMethod, self.args, create=True)
 
+class _NodeChange(object):
+    pass
 
 class GraphInstanceMethod(object):
     """A GraphMethod  bound to an instance of its class.
@@ -822,6 +888,33 @@ class GraphInstanceMethod(object):
 
     def isOverlaid(self, *args):
         return self.node(*args).isOverlaid()
+
+class _GraphInstanceMethod(GraphInstanceMethod):
+
+    # TODO: This interface always has one value; the active value.
+
+    def toNode(self, *args):
+        return _graph.lookupNode(*args)
+
+    def setValue(self, value, *args):
+        _graph.setValue(self.toNode(*args), value)
+
+    def getValue(self, *args):
+        return _graph.getValue(self.toNode(*args))
+
+    def clearValue(self, *args):
+        return _graph.clearValue(self.toNode(*args))
+
+    def overlayValue(self, value, *args):
+        return _graph.overlayValue(self.toNode(*args))
+
+    def clearOverlay(self, *args):
+        return _graph.clearOverlay(self.toNode(*args))
+
+
+    def __call__(self, *args):
+        return self.getValue(*args)
+
 
 class GraphType(type):
     """Metaclass responsible for creating on-graph objects.
