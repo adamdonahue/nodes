@@ -20,15 +20,30 @@ class Graph(object):
         self.activeNode = None          # The active node during a computation.
         self.activeGraphContext = None  # The active context.
 
-    def lookupNode(self, graphInstanceMethod, args, create=True):
+    def lookupNode(self, graphInstanceMethod, args, graphContext=None, create=True):
         """Returns the Node underlying the given object and its method
         as called with the specified arguments.
 
         """
         key = (graphInstanceMethod.graphObject, graphInstanceMethod.name) + args
         if key not in self.nodes and create:
-            self.nodes[key] = Node(graphInstanceMethod.graphObject, graphInstanceMethod.graphMethod, args=args)
+            self.nodes[key] = Node(graphInstanceMethod.graphObject, graphInstanceMethod.graphMethod, args)
         return self.nodes.get(key)
+
+    def _lookupNode(self, graphInstanceMethod, args, graphContext, create=True):
+        # TODO: We want to search through the contexts until we find
+        #       the node.
+        tmpGraphContext = graphContext
+        while tmpGraphContext is not None:
+            node = tmpGraphContext.nodes.get(key)
+            if node is not None:
+                return node
+            tmpGraphContext = tmpGraphContext.parentGraphContext
+        if create:
+            return self.createNode(graphInstanceMethod, args, graphContext)
+
+    def createNode(self, graphInstanceMethod, args, graphContext):
+        pass
 
     def isComputing(self):
         """Returns True if the graph is currently computing a value,
@@ -43,7 +58,7 @@ class Graph(object):
         #
         return self.activeNode
 
-    def getValue(self, node):
+    def getValue(self, node, graphContext=None):
         """Returns the value of the node, recalculating if necessary,
         honoring any active graph context.
 
@@ -205,6 +220,7 @@ class GraphContext(object):
         #
         self._graph = graph or _graph
         self._parentGraphContext = parentGraphContext
+        self._nodes = {}
         self._overlays = {}           # Node overlays by node.
         self._state = {}              # Node values by node.
         self._applied = set()         # Nodes whose overlays in this context have been applied.
@@ -520,31 +536,17 @@ class Node(object):
     by the arguments used to call it.
 
     """
-    def __init__(self, graphObject, graphMethod, args=()):
+    def __init__(self, graphObject, graphMethod, args=(), graphContext=None):
         """Creates a new node on the graph.
 
         Fundamentally a node represents a value that is either
         calculated or directly specified by a user.
 
         """
-        self.graphObject = graphObject
-        self.graphMethod = graphMethod
-        self.args = args
-
-        # A node has a list of the nodes that depend upon it as well 
-        # as the nodes that it depends upon. I call these outputs 
-        # and inputs, respectively.  
-        #
-        # These relationships are maintained by the graph engine,
-        # which has the logic for how to construct a graph.
-        # A node is mainly responsible for (re)calculating its
-        # value (or returning it if already set) and for invalidating
-        # anything that relies upon it.
-        #
-        # TODO: I may want to model these more generally as edges,
-        #       allowing us to set attributes on them, but for now
-        #       the two lists will suffice.
-        #       
+        self._graphObject = graphObject
+        self._graphMethod = graphMethod
+        self._args = args
+        self._graphContext = graphContext
         self._outputs = set()
         self._inputs = set()
 
@@ -650,7 +652,7 @@ class Node(object):
         is an issue with the graph.
 
         """
-        self._calcedValue = self.graphMethod(self.graphObject, *self.args)
+        self._calcedValue = self._graphMethod(self._graphObject, *self._args)
         self._isCalced = True
 
     def _invalidateCalc(self):
@@ -677,7 +679,7 @@ class Node(object):
         themselves.
 
         """
-        if not self.graphMethod.isSettable():
+        if not self._graphMethod.isSettable():
             raise RuntimeError("You cannot set a read-only node.")
         self._invalidateOutputCalcs()
         self._setValue = value
@@ -688,7 +690,7 @@ class Node(object):
         any.
 
         """
-        if not self.graphMethod.isSettable():
+        if not self._graphMethod.isSettable():
             raise RuntimeError("You cannot clear a read-only node.")
         if not self.isSet():
             return
@@ -703,7 +705,7 @@ class Node(object):
 
         """
         # TODO: Perhaps optimize for _overlaidValue == value case.
-        if not self.graphMethod.isOverlayable():
+        if not self._graphMethod.isOverlayable():
             raise RuntimeError("You cannot overlay this node.")
         self._invalidateOutputCalcs()
         self._overlaidValue = value
@@ -714,7 +716,7 @@ class Node(object):
         outputs if a overlay was actually cleared.
 
         """
-        if not self.graphMethod.isOverlayable():
+        if not self._graphMethod.isOverlayable():
             raise RuntimeError("You cannot overlay this node, so certainly you can't clear any overlay!")
         if not self.isOverlaid():
             return
@@ -765,9 +767,9 @@ class Node(object):
 
     def __repr__(self):
         return '<Node graphObject=%r;graphMethod=%s;args=%s>' % (
-                self.graphObject,
-                self.graphMethod,
-                self.args
+                self._graphObject,
+                self._graphMethod,
+                self._args
                 )
 
     def __str__(self):
