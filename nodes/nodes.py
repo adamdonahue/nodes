@@ -14,6 +14,18 @@ class Graph(object):
     """The core graph plumbing; essentially the controller and
     global runtime state.
 
+    Most of the node values and state are context-specific.
+    The high-level Graph interface is merely a front-end
+    to the context-specific hooks, with context determined
+    by state.
+
+    That is, a graph is essentially a set of layered storage
+    values, with the root layer having 'special' status
+    as the global context in which values are set and
+    retrieved by default, and that drive persistent changes.
+
+    The subsidiary contexts are used only for temporary changes.
+
     """
     def __init__(self):
         self.nodes = {}
@@ -25,6 +37,8 @@ class Graph(object):
         as called with the specified arguments.
 
         """
+        if graphContext:
+            return _lookupNode(graphInstanceMethod, args, graphContext, create=create)
         key = (graphInstanceMethod.graphObject, graphInstanceMethod.name) + args
         if key not in self.nodes and create:
             self.nodes[key] = Node(graphInstanceMethod.graphObject, graphInstanceMethod.graphMethod, args)
@@ -33,17 +47,23 @@ class Graph(object):
     def _lookupNode(self, graphInstanceMethod, args, graphContext, create=True):
         # TODO: We want to search through the contexts until we find
         #       the node.
-        tmpGraphContext = graphContext
-        while tmpGraphContext is not None:
-            node = tmpGraphContext.nodes.get(key)
-            if node is not None:
-                return node
-            tmpGraphContext = tmpGraphContext.parentGraphContext
-        if create:
+        node = graphContext.lookupNode(graphInstanceMethod, args, create=create)
+        if not node and create:
             return self.createNode(graphInstanceMethod, args, graphContext)
+        return node
 
-    def createNode(self, graphInstanceMethod, args, graphContext):
-        pass
+    def createNode(self, graphInstanceMethod, args, graphContext=None):
+        if graphContext:
+            return self._createNode(graphInstanceMethod, args, graphContext)
+        return Node(graphInstanceMethod.graphObject, graphInstanceMethod.graphMethod, args)
+
+    def _createNode(self, graphInstanceMethod, args, graphContext):
+        return graphContext.createNode(graphInstanceMethod, args)
+
+    def _invalidateNode(self, node):
+        for outputNode in node.outputs:
+            self._invalidateNode(outputNode)
+        node._isValid = False
 
     def isComputing(self):
         """Returns True if the graph is currently computing a value,
@@ -79,9 +99,16 @@ class Graph(object):
         if the node is not settable.
 
         """
+        # get the node from the layer
+        # 
         if self.isComputing():
             raise RuntimeError("You cannot set a node during graph evaluation.")
         node.setValue(value)
+
+    def _setValue(self, node, value, graphContext=None):
+        if not isComputing():
+            raise RuntimeError("You cannot set a node during graph evaluation.")
+        graphContext.setValue(node, value)
 
     def clearSet(self, node):
         """Clears the current node if it has been set.
@@ -98,6 +125,54 @@ class Graph(object):
             raise RuntimeError("You cannot clear a set value during graph evaluation.")
         node.clearSet()
 
+    # TODO: Is an overlay really just a graph context that overrides a 
+    #       higher level graoh context, with no need for special 'overlay' 
+    #       values per se, the only differentiation being at the client
+    #       interface level?
+    #
+    #       If this is the case, the the context needs not know about
+    #       overlays.
+    #
+    #       But here's a use case:  
+    #           top context has nodes A -> B; and C
+    #           enter a new context:
+    #               set B
+    #               now, in the context, I ask for A.
+    #               A doesn't exist in context, so is created
+    #               A is computed
+    #               now have two contexts:
+    #                   top (A, B, C)
+    #                   child (A, B)
+    #
+    #           exit the context:
+    #               save nodes until context is out of scope
+    #               clean up nodes when it is
+    #
+    #           what about C.  an in child context, as for C.
+    #           C is not in context.  I could create it.
+    #           But because it doesn't use anything that has
+    #           changed in the context, the top value is still
+    #           valid, so why shouldn't I use that?
+    #           
+    #           But how do I know this?  I can ask for C's inputs,
+    #           and if any of these inputs is in the current context
+    #           and invalid, i create and compute C.
+    #
+    #           If not, I use parent context's C.  But what if the contexts
+    #           are highly nested?  
+    #
+    #       Let's assume we fix this up.  Then an 'overlay' is really just a
+    #       setting that requires a specific context.
+    #
+    #       EXCEPT, there is still a problem.  What if I overlay in the top
+    #       context?  Where does the old value go?
+    #   
+    #       One option is to enforce this in the Graph interface so that
+    #       overlay operations either always implicitly define a new 
+    #       context, OR prevent overlay is the active context == the
+    #       graph's root context.
+    #
+    #       I think this will work ...
     def overlayValue(self, node, value):
         """Adds a overlay to the active graph context and immediately applies it to the node.
 
@@ -226,6 +301,21 @@ class GraphContext(object):
         self._applied = set()         # Nodes whose overlays in this context have been applied.
         self._removed = set()         # Nodes set at a higher level but cleared here.
         self._populating = True
+
+    def lookupNode(self, graphInstanceMethod, args, create=True):
+        # Search parent contexts, or local context only.
+        key = (graphInstanceMethod.graphObject, graphInstanceMethod.name) + args
+        if key not in self._nodes and create:
+            self._nodes[key] = self.createNode(graphInstanceMethod, args)
+        return self._nodes.get(key)
+
+    def createNode(self, graphInstanceMethod, args):
+        return Node(graphInstanceMethod.graphObject, graphInstanceMethod.name, args, self)
+
+    def getValue(self, node):
+        if not node._isValid:       # Make this func call when real isValid is replaced.
+            node.calculate()
+        return node.value()
 
     def addOverlay(self, node, value):
         """Adds a new overlay to the graph context, but does not apply it to the node.
@@ -572,6 +662,14 @@ class Node(object):
         self._setValue = None
         self._calcedValue = None
 
+        # TODO:  New stuff for movement to contexts as storage layer.
+        self._isValid = False
+        self._value = None
+
+    @property
+    def value(self):
+        return self._value
+
     def addInput(self, inputNode):
         """Informs the node of an input dependency, which indicates
         the node requires the input node's value to complete
@@ -637,6 +735,10 @@ class Node(object):
         if not self.isCalced():
             self.calcValue()
         return self._calcedValue
+
+    def calculate(self):    # Calculate the node.
+        self._value = self._graphMethod(self._graphObject, *self._args)
+        return self._value
 
     def calcValue(self):
         """(Re)calculates the value of this node by calling
