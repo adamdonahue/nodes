@@ -32,38 +32,38 @@ class Graph(object):
         self.activeNode = None          # The active node during a computation.
         self.activeGraphContext = None  # The active context.
 
-    def lookupNode(self, graphInstanceMethod, args, graphContext=None, create=True):
+    def lookupNode(self, graphInstanceMethod, args, create=True):
         """Returns the Node underlying the given object and its method
         as called with the specified arguments.
 
         """
-        if graphContext:
-            return _lookupNode(graphInstanceMethod, args, graphContext, create=create)
         key = (graphInstanceMethod.graphObject, graphInstanceMethod.name) + args
         if key not in self.nodes and create:
             self.nodes[key] = Node(graphInstanceMethod.graphObject, graphInstanceMethod.graphMethod, args)
         return self.nodes.get(key)
 
     def _lookupNode(self, graphInstanceMethod, args, graphContext, create=True):
-        # TODO: We want to search through the contexts until we find
-        #       the node.
-        node = graphContext.lookupNode(graphInstanceMethod, args, create=create)
+        # TODO: Add code to do correct hierarchical search.
+        if graphContext:
+            return _lookupNode(graphInstanceMethod, args, graphContext, create=create)
+        node = graphContext._lookupNode(graphInstanceMethod, args, create=create)
         if not node and create:
-            return self.createNode(graphInstanceMethod, args, graphContext)
+            return self._createNode(graphInstanceMethod, args, graphContext)
         return node
 
-    def createNode(self, graphInstanceMethod, args, graphContext=None):
-        if graphContext:
-            return self._createNode(graphInstanceMethod, args, graphContext)
-        return Node(graphInstanceMethod.graphObject, graphInstanceMethod.graphMethod, args)
-
     def _createNode(self, graphInstanceMethod, args, graphContext):
-        return graphContext.createNode(graphInstanceMethod, args)
+        return graphContext._createNode(graphInstanceMethod, args)
 
     def _invalidateNode(self, node):
-        for outputNode in node.outputs:
-            self._invalidateNode(outputNode)
+        self._invalidateNodeOutputs(node)
         node._isValid = False
+        node._isSet = False
+
+    def _invalidateNodeOutputs(self, node):
+        for outputNode in node.outputs:
+            if outputNode._isSet:
+                continue
+            self._invalidateNode(outputNode)
 
     def isComputing(self):
         """Returns True if the graph is currently computing a value,
@@ -76,6 +76,9 @@ class Graph(object):
         # The test is simple at the moment: if a node is active,
         # we're computing.
         #
+        return self.activeNode
+
+    def _isComputing(self):
         return self.activeNode
 
     def getValue(self, node, graphContext=None):
@@ -94,6 +97,9 @@ class Graph(object):
         finally:
             self.activeNode = outputNode
 
+    def _getValue(self, node, graphContext):
+        return graphContext._getValue(node)
+
     def setValue(self, node, value):
         """Sets for value of a node, and raises an exception
         if the node is not settable.
@@ -105,10 +111,10 @@ class Graph(object):
             raise RuntimeError("You cannot set a node during graph evaluation.")
         node.setValue(value)
 
-    def _setValue(self, node, value, graphContext=None):
+    def _setValue(self, node, value, graphContext):
         if not isComputing():
             raise RuntimeError("You cannot set a node during graph evaluation.")
-        graphContext.setValue(node, value)
+        graphContext._setValue(node, value)
 
     def clearSet(self, node):
         """Clears the current node if it has been set.
@@ -124,6 +130,9 @@ class Graph(object):
         if self.isComputing():
             raise RuntimeError("You cannot clear a set value during graph evaluation.")
         node.clearSet()
+
+    def _clearValue(self, node, graphContext):
+        graphContext._clearValue(node)
 
     # TODO: Is an overlay really just a graph context that overrides a 
     #       higher level graoh context, with no need for special 'overlay' 
@@ -173,6 +182,8 @@ class Graph(object):
     #       graph's root context.
     #
     #       I think this will work ...
+    #
+
     def overlayValue(self, node, value):
         """Adds a overlay to the active graph context and immediately applies it to the node.
 
@@ -182,6 +193,9 @@ class Graph(object):
         if not self.activeGraphContext:
             raise RuntimeError("You cannot overlay a node outside a graph context.")
         self.activeGraphContext.overlayValue(node, value)
+
+    def _overlayValue(self, node, value, graphContext):
+        graphContext._overlayValue(node, value)
 
     def clearOverlay(self, node):
         """Clears an overlay previously set in the active graph context.
@@ -193,32 +207,8 @@ class Graph(object):
             raise RuntimeError("You cannot clear a overlay outside a graph context.")
         self.activeGraphContext.clearOverlay(node)
 
-class _Graph(Graph):
-
-    def __init__(self):
-        self.mainGraphLayer = None      # TODO: The "top-level" layer.
-        self.activeGraphLayer = self.mainGraphLayer
-        self.activeNode = None
-
-    def getValue(self, graphInstanceMethod, args=(), graphLayer=None):
-        pass
-
-    def setValue(self, graphInstanceMethod, value, args=(), graphLayer=None):
-        pass
-
-    def overlayValue(self, graphInstanceMethod, value, args=(), graphLayer=None):
-        pass
-
-    def clearOverlay(self, graphInstanceMethod, args=(), graphLayer=None):
-        pass
-
-    def lookupNode(self, graphInstanceMethod, args=(), graphLayer=None, create=True):
-        graphLayer = graphLayer or self.activeGraphLayer
-        # TODO: Search through the layer and its parents for the node; first match wins.
-        # TODO: But now if the ndoe  doesn't exist we need to create it as before, except
-        #       initialize it with some status values because the node itself will
-        #       no longer be aware of its larger context, only its validity and value.
-
+    def _clearOverlay(self, node, graphContext):
+        graphContext._clearOverlay(node)
 
 
 class GraphVisitor(object):
@@ -245,6 +235,28 @@ class GraphVisitor(object):
 
         """
         raise NotImplementedError()
+
+class _GraphVisitor(object):
+
+    def __init__(self, graph):
+        self._graph = graph
+
+    def _visitOutputs(self, node, graphContext):
+        outputs = node.outputs
+        while outputs:
+            output = outputs.pop(0)
+            self._visit(output, graphContext)
+            outputs.extend(output.outputs)
+
+    def _visitInputs(self, node, graphContext):
+        inputs = node.inputs
+        while inputs:
+            input = inputs.pop(0)
+            self._visit(input, graphContext)
+            inputs.extend(input.inputs)
+
+    def _visit(self, node):
+        raise NotImeplementedError()
 
 # TODO: Split collections of overlays from the contexts.
 # TODO: Decouple this from the graph, making graph a paramter to __init__?
@@ -302,20 +314,42 @@ class GraphContext(object):
         self._removed = set()         # Nodes set at a higher level but cleared here.
         self._populating = True
 
-    def lookupNode(self, graphInstanceMethod, args, create=True):
+    def _lookupNode(self, graphInstanceMethod, args, create=True):
         # Search parent contexts, or local context only.
         key = (graphInstanceMethod.graphObject, graphInstanceMethod.name) + args
         if key not in self._nodes and create:
             self._nodes[key] = self.createNode(graphInstanceMethod, args)
         return self._nodes.get(key)
 
-    def createNode(self, graphInstanceMethod, args):
+    def _createNode(self, graphInstanceMethod, args):
         return Node(graphInstanceMethod.graphObject, graphInstanceMethod.name, args, self)
 
-    def getValue(self, node):
-        if not node._isValid:       # Make this func call when real isValid is replaced.
-            node.calculate()
-        return node.value()
+    def _getValue(self, node):
+        # TODO: This is a test impl with node's internals exposed.
+        if not node._isValid:
+            node._value = node.graphMethod(node.graphObject, *node.args)
+        return node._value
+
+    def _setValue(self, node, value):
+        self._invalidateNodeOutputs(node)
+        node._value = value
+        node._isValid = True
+        node._isSet = True
+
+    def _clearValue(self, node):
+        self._invalidateNode(node)
+
+    def _invalidateNode(self, node):
+        self._invalidateNodeOutputs(node)
+        node._isSet = False
+        node._isValid = False
+        node._value = None
+
+    def _invalidateNodeOutputs(self, node):
+        for output in node.outputs:
+            if output._isSet:
+                continue
+            self._invalidateNode(output)
 
     def addOverlay(self, node, value):
         """Adds a new overlay to the graph context, but does not apply it to the node.
@@ -481,11 +515,13 @@ class GraphContext(object):
             self._graph.activeGraphContext.clearOverlay(node)
         self._graph.activeGraphContext = self.activeParentGraphContext
 
-class _GraphLayer(GraphContext):
-    pass
+class _GraphContext(GraphContext):
+    
+    def __enter__(self):
+        return GraphContext.__enter__()
 
-class _GraphContext(object):
-    pass
+    def __exit__(self, *args):
+        return GraphContext.__exit__(*args)
 
 class GraphMethod(object):
     """An unbound graph-enabled method.
@@ -594,27 +630,6 @@ class GraphMethod(object):
 #       value or other state.
 #       
 
-class _GraphMethod(GraphMethod):
-    pass
-
-class NodeReference(object):
-    """Stores the context-invariant parts of a Node, namely its
-    graphObject, graphMethod, and arguments, decoupling it
-    from the stuff that will depend on the context and state
-    of the graph.
-
-    """
-    def __init__(self, graphInstanceMethod, args=()):
-        self.graphInstanceMethod = graphInstanceMethod
-        self.args = args
-
-    def node(self, graph):
-        """Return the actual node.
-
-        """
-        # TODO: Support context-based lookup when nodes are stored in contexts.
-        return graph.lookupNode(self.graphInstanceMethod, args)
-
 class Node(object):
     """A node on the graph.
 
@@ -681,7 +696,6 @@ class Node(object):
         """
         self._inputs.add(inputNode)
 
-
     def addOutput(self, outputNode):
         """Informs the node of a new output, that is, a node
         that depends on the current node for its own value.
@@ -736,7 +750,10 @@ class Node(object):
             self.calcValue()
         return self._calcedValue
 
-    def calculate(self):    # Calculate the node.
+    def _getValue(Self):
+        return self._value
+
+    def _calcValue(self):    # Calculate the node.
         self._value = self._graphMethod(self._graphObject, *self._args)
         return self._value
 
@@ -787,6 +804,9 @@ class Node(object):
         self._setValue = value
         self._isSet = True
 
+    def _setValue(self, value):
+        raise NotImplementedError()
+
     def clearSet(self):
         """Clears a previously set value on the node, if
         any.
@@ -799,6 +819,9 @@ class Node(object):
         self._invalidateOutputCalcs()
         self._isSet = False
         self._setValue = None
+
+    def _clearValue(self):
+        raise NotImplementedError()
 
     def overlayValue(self, value):
         """Overlays the value of the node.  At this level a overlay
@@ -864,9 +887,6 @@ class Node(object):
         """
         return self._isCalced
 
-    def node(self):
-        return self
-
     def __repr__(self):
         return '<Node graphObject=%r;graphMethod=%s;args=%s>' % (
                 self._graphObject,
@@ -883,34 +903,6 @@ class Node(object):
                 self.isOverlaid(),
                 self.isCalced()
                 )
-
-class _Node(object):
-    # TODO: A node should at least know its states even if they can't be 
-    #       modified by a user directly.
-    #
-    #       The states I need present, I believe, are:
-    #           isValid
-    #           isSet
-    #           isOverlaid
-    #           delegated?
-    #           
-    # TODO: Incorporate graph layer into Node; that's where it lives.
-    #
-    def __init__(self, graphLayer, graphInstanceMethod, args):
-        self._graphLayer = graphLayer
-        self._graphInstanceMethod = graphInstanceMethod
-        self._args = args
-        self._value = None
-        self._isValid = False
-        self._isSet = False
-        self._outputs = set()
-        self._inputs = set()
-
-    def isValid(self):
-        return self._isValid
-
-    def isSet(self):
-        return self._isSet
 
 class NodeChange(object):
     """Encapsulates a pending change to a node.  Intended to be
@@ -930,8 +922,8 @@ class NodeChange(object):
     def node(self):
         return _graph.lookupNode(self.graphInstanceMethod, self.args, create=True)
 
-class _NodeChange(object):
-    pass
+    def _toNode(self, graph, graphContext):
+        return graph.lookupNode(self.graphInstanceMethod, self.args, graphContext, create=True)
 
 class GraphInstanceMethod(object):
     """A GraphMethod  bound to an instance of its class.
@@ -951,6 +943,9 @@ class GraphInstanceMethod(object):
     def node(self, *args):
         return _graph.lookupNode(self, args, create=True)
 
+    def _toNode(self, *args):
+        return _graph._lookupNode(self, args, create=True)
+
     def __call__(self, *args):
         return self.getValue(*args)
 
@@ -960,6 +955,9 @@ class GraphInstanceMethod(object):
 
         """
         return _graph.getValue(self.node(*args))
+
+    def _getValue(self, *args):
+        return _graph._getValue(self._toNode(*args))
 
     def setValue(self, value, *args):
         # TODO: Is this the right place for delegation, or should
@@ -978,47 +976,32 @@ class GraphInstanceMethod(object):
             return
         _graph.setValue(self.node(*args), value)
 
+    def _setValue(self, value, *args):
+        _graph._setValue(self._toNode(*args))
+
     def clearSet(self, *args):
         _graph.clearSet(self.node(*args))
+
+    def _clearValue(self, *args):
+        _graph._clearValue(self._toNode(*args))
 
     def overlayValue(self, value, *args):
         _graph.overlayValue(self.node(*args), value)
 
+    def _overlayValue(self, value, *args):
+        _graph._overlayValue(self._toNode(*args), value)
+
     def clearOverlay(self, *args):
         _graph.clearOverlay(self.node(*args))
+
+    def _clearOverlay(self, *args):
+        _graph._clearOverlay(self._toNode(*args))
 
     def isSet(self, *args):
         return self.node(*args).isSet()
 
     def isOverlaid(self, *args):
         return self.node(*args).isOverlaid()
-
-class _GraphInstanceMethod(GraphInstanceMethod):
-
-    # TODO: This interface always has one value; the active value.
-
-    def toNode(self, *args):
-        return _graph.lookupNode(*args)
-
-    def setValue(self, value, *args):
-        _graph.setValue(self.toNode(*args), value)
-
-    def getValue(self, *args):
-        return _graph.getValue(self.toNode(*args))
-
-    def clearValue(self, *args):
-        return _graph.clearValue(self.toNode(*args))
-
-    def overlayValue(self, value, *args):
-        return _graph.overlayValue(self.toNode(*args))
-
-    def clearOverlay(self, *args):
-        return _graph.clearOverlay(self.toNode(*args))
-
-
-    def __call__(self, *args):
-        return self.getValue(*args)
-
 
 class GraphType(type):
     """Metaclass responsible for creating on-graph objects.
