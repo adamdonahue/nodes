@@ -552,6 +552,15 @@ class GraphLayer(object):
         return (graphInstanceMethod.graphObject, graphInstanceMethod.name) + args
 
     def lookupNode(self, graphInstanceMethod, args, create=True):
+        # Uses two hierarchies, essentially - first, looks in
+        # the current graph layer for any nodes in it or its
+        # parents.  Failing that, moves up the call stack until
+        # a node is found.
+        #
+        # Or should the graph itself do this?
+        #
+        # Because this code seems kinda gross.
+        #
         key = self.nodeKey(graphInstanceMethod, args)
         graphLayer = self
         while graphLayer:
@@ -559,6 +568,11 @@ class GraphLayer(object):
             if node:
                 break
             graphLayer = graphLayer._parentGraphLayer
+        if not node:
+            for graphLayer in reversed(self._graphLayerStack):
+                 node = graphLayer.lookupNode(graphInstanceMethod, args, create=False)
+                 if node:
+                     break
         if not node and create:
             node = self.createNode(graphInstanceMethod, args)
         return node
@@ -577,25 +591,13 @@ class GraphLayer(object):
         """
         return Node(graphInstanceMethod.graphObject, graphInstanceMethod.graphMethod, args, self)
 
-    def getNodeValue(self, node):
-        if node.valid or node.fixed:
-            return node.value
-
-    def setNodeValue(self, node, value):
-        node.setValue(value)
-
-    def clearNodeValue(self, node):
-        node.clearValue()
-
-    def applyNodeOverlay(self, node, overlay):
-        overlays = self._overlayStack.get(node, [])
-        if node.isValid():
-            self._overlayStack.append([node._value, node.isValid(), node.isSet(), node.isOverlaid()])
-        # TODO: This is getting hard to track; I'll switch to flags.
-        node._isValid = False
-        node._isSet = False
-        node._isOverlaid = True
-        node.value = overlay
+    def applyOverlay(self, node, overlay):
+        if node.valid or node.set:
+            self._overlayStack.append([node._value, node._flags])
+        node._flags &= ~(node.VALID|node.SET)
+        node._value = overlay
+        for output in node.outputs:
+            output.invalidate()
         # FIXME: Invalidate node - or graph
         raise
 
@@ -1008,6 +1010,13 @@ class Node(object):
 
         """
         return self._isCalced
+
+    # DON'T THINK THIS IS THE RIGHT PLACE.  JUST PUTTING IT HERE FOR NOW.
+    def invalidate(self):
+        self._flags &= ~self.VALID
+        for output in self.outputs:
+            if output.valid:
+                output.invalidate()
 
     def __repr__(self):
         return '<Node graphObject=%r;graphMethod=%s;args=%s>' % (
