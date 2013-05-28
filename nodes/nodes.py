@@ -39,31 +39,11 @@ class Graph(object):
             self.nodes[key] = Node(graphInstanceMethod.graphObject, graphInstanceMethod.graphMethod, args)
         return self.nodes.get(key)
 
-    def _lookupNode(self, graphInstanceMethod, args, graphLayer, create=True):
-        """Returns the Node underlying the given object and its method
-        as called with the specified arguments.
+    def _lookupNode(self, graphInstanceMethod, args=(), create=True):
+        raise NotImplementedError()
 
-        """
-        graphLayer = graphLayer or self.activeGraphLayer
-        node = graphLayer.lookupNode(graphInstanceMethod, args)
-        if not node and create:
-            node = graphLayer.createNode(graphInstanceMethod, args)
-        return node
-
-    def _createNode(self, graphInstanceMethod, args, graphLayer=None):
-        graphLayer = graphLayer or self.activeGraphLayer
-        return graphLayer.createNode(graphInstanceMethod, args)
-
-    def _invalidateNode(self, node, graphLayer=None):
-        self._invalidateNodeOutputs(node)
-        node._isValid = False
-        node._isSet = False
-
-    def _invalidateNodeOutputs(self, node):
-        for outputNode in node.outputs:
-            if outputNode._isSet:
-                continue
-            self._invalidateNode(outputNode)
+    def _createNode(self, graphInstanceMethod, args=()):
+        raise NotImplementedError()
 
     def isComputing(self):
         """Returns True if the graph is currently computing a value,
@@ -79,7 +59,7 @@ class Graph(object):
         return self.activeNode
 
     def _isComputing(self):
-        return self.activeNode
+        raise NotImplementedError()
 
     def getValue(self, node, graphContext=None):
         """Returns the value of the node, recalculating if necessary,
@@ -98,14 +78,10 @@ class Graph(object):
             self.activeNode = outputNode
 
     def _getValue(self, graphInstanceMethod, args=()):
-        graphLayer = self.activeGraphLayer
-        node = self._lookupNode(graphInstanceMethod, args, graphLayer)
-        if node.isValid:
-            return node.value
-        return self._computeValue(node, graphLayer)
+        raise NotImplementedError()
 
-    def _computeValue(self, node, graphLayer):
-        pass
+    def _calculateValue(self, graphInstanceMethod, args=()):
+        raise NotImplementedError()
 
     def setValue(self, node, value):
         """Sets for value of a node, and raises an exception
@@ -119,7 +95,7 @@ class Graph(object):
         node.setValue(value)
 
     def _setValue(self, graphInstanceMethod, value, args=()):
-        graphLayer = self.activeGraphLayer
+        raise NotImplementedError()
 
     def clearSet(self, node):
         """Clears the current node if it has been set.
@@ -137,7 +113,7 @@ class Graph(object):
         node.clearSet()
 
     def _clearValue(self, graphInstanceMethod, args):
-        graphLayer = self.activeGraphLayer
+        raise NotImplementedError()
 
     def overlayValue(self, node, value):
         """Adds a overlay to the active graph context and immediately applies it to the node.
@@ -149,8 +125,8 @@ class Graph(object):
             raise RuntimeError("You cannot overlay a node outside a graph context.")
         self.activeGraphContext.overlayValue(node, value)
 
-    def _overlayValue(self, graphInstanceMethod, value):
-        graphLayer = self.activeGraphLayer
+    def _overlayValue(self, graphInstanceMethod, args, value):
+        raise NotImplementedError()
 
     def clearOverlay(self, node):
         """Clears an overlay previously set in the active graph context.
@@ -163,12 +139,7 @@ class Graph(object):
         self.activeGraphContext.clearOverlay(node)
 
     def _clearOverlay(self, graphInstanceMethod, args=()):
-        graphContext._clearOverlay(node)
-
-class Overlay(object):
-
-    def __init__(self, value):
-        self._value = value
+        raise NotImplementedError()
 
 class GraphVisitor(object):
     """Visits a hierarchy of graph nodes in depth first order.
@@ -436,12 +407,20 @@ class GraphOverlay(object):
         self._graph = graph
         self._graphLayer = graphLayer
         self._overlays = {}
-        self._overlaidNodes = set()
 
-    @property
-    def overlays(self):
-        return self._overlays
-    # TODO: Add add/remove/etc., basically code that was in GraphContext
+    def addOverlay(self, node, value):
+        raise NotImplementedError()
+
+    def removeOverlay(self, node):
+        raise NotImplementedError()
+
+    def __enter__(self):
+        self._previousOverlay, self._graph.activeOverlay = self._graph.activeOverlay, self
+        self._previousLayerOverlay, self._graphLayer._activeOverlay = self._graphLayer._activeOverlay, self
+        return
+
+    def __exit__(self, *args):
+        return
 
 def graphOverlay():
     return GraphOverlay(_graph, _graph.activeGraphLayer)
@@ -507,7 +486,7 @@ class GraphLayer(object):
         node._flags |= node.SET
 
     def applyOverlay(self, node, overlay):
-        if node.valid or node.set:
+        if node.isValid or node.set:
             self._overlayStack[node].append([node._value, node._flags])
         node._flags &= ~(node.VALID|node.SET)
         node._value = overlay
@@ -664,7 +643,7 @@ class Node(object):
 
     """
     INVALID  = 0x0000
-    VALID    = 0x0001
+    VALID    = 0x0001   # Applies to node computation only.
     SET      = 0x0002
     OVERLAID = 0x0004
 
@@ -713,7 +692,7 @@ class Node(object):
         self._flags = self.INVALID
 
     @property
-    def _isValid(self):
+    def valid(self):
         return self._flags & self.VALID
 
     @property
