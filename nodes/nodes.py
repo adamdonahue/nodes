@@ -475,7 +475,7 @@ class GraphLayer(object):
         self._nodes = {}
         self._rootOverlay = GraphOverlay(self._graph, self)
         self._activeOverlay = self._rootOverlay
-        self._overlayStack = {}
+        self._overlayStack = collections.defaultdict(lambda: [])
         self._activeStack = []
 
     def nodeKey(self, graphInstanceMethod, args):
@@ -508,26 +508,20 @@ class GraphLayer(object):
 
     def applyOverlay(self, node, overlay):
         if node.valid or node.set:
-            self._overlayStack.append([node._value, node._flags])
+            self._overlayStack[node].append([node._value, node._flags])
         node._flags &= ~(node.VALID|node.SET)
         node._value = overlay
-        for output in node.outputs:
-            output.invalidate()
-        # FIXME: Invalidate node - or graph
-        raise
+        #        for output in node.outputs:
+        #    output.invalidate()
+        #
+        # TODO: Invalidate node - or graph
 
     def removeNodeOverlay(self, node):
         """Removes only the most recent overlay."""
-        overlays = self._overlayStack.get(node)
-        if not overlays:
-            return
-        value, isValid, isSet, isOverlaid = overlays[-1]
-        node._isValid = isValid
-        node._isSet = isSet
-        node._isOverlaid = isOverlaid
-        node._value = value
-        # FIXME: Invalidate node - or graph
-        raise
+        if not node in self._overlayStack:
+            raise RuntimeError("No overlay has been applied to that node in this graph layer.")
+        node._value, node._flags = self._overlayStack[node].pop()
+        # TODO: Invalidate grpah.
 
     def __enter__(self):
         # We save the state to a stack (not just a pair of variables) because the
