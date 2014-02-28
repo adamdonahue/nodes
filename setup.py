@@ -1,3 +1,8 @@
+#!/usr/bin/env python
+#
+# Set-up script for the nodes module.
+#
+
 from setuptools import setup
 
 setup(name='nodes',
