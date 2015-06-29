@@ -1,4 +1,4 @@
-"""nodes: An original, easy-to-use graph-oriented object model for Python.
+"""nodes: An easy-to-use graph-oriented programming model for Python.
 
 """
 import collections
